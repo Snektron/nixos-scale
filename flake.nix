@@ -3,7 +3,7 @@
 
   inputs = {
     nixpkgs = {
-      url = "github:nixos/nixpkgs/nixos-24.11";
+      url = "github:nixos/nixpkgs/nixos-25.05";
     };
   };
 
@@ -30,7 +30,6 @@
         numactl,
         libdrm,
         elfutils,
-        libtinfo,
         # TODO: This should be removed all together,
         # its currently only needed for hiprtc which should really be part
         # of the scale distribution.
@@ -56,7 +55,6 @@
           numactl
           libdrm
           elfutils
-          libtinfo
           rocmPackages_6.clr
         ];
 
