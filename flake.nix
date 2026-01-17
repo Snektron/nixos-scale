@@ -3,7 +3,7 @@
 
   inputs = {
     nixpkgs = {
-      url = "github:nixos/nixpkgs/nixos-25.05";
+      url = "github:nixos/nixpkgs/nixos-25.11";
     };
   };
 
@@ -12,12 +12,21 @@
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; };
     scaleTargets = [
+      "gfx900"
+      "gfx906"
+      "gfx908"
+      "gfx90a"
+      "gfx942"
+      "gfx950"
       "gfx1010"
       "gfx1030"
+      "gfx1032"
       "gfx1100"
       "gfx1101"
       "gfx1102"
-      "gfx900"
+      "gfx1151"
+      "gfx1200"
+      "gfx1201"
     ];
   in {
     packages.${system} = {
@@ -30,24 +39,19 @@
         numactl,
         libdrm,
         elfutils,
-        # TODO: This should be removed all together,
-        # its currently only needed for hiprtc which should really be part
-        # of the scale distribution.
-        rocmPackages_6,
         lib,
         callPackage,
-        # Should we get gcc from the stdenv?
-        gcc
+        makeWrapper,
       }: stdenv.mkDerivation (finalAttrs: rec {
-        pname = "scale-unstable";
-        version = "2025.03.24";
+        pname = "scale";
+        version = "1.5.0";
         src = fetchurl {
-          url = "https://unstable-pkgs.scale-lang.com/tar/scale-free-unstable-${version}-amd64.tar.xz";
-          hash = "sha256-YJ4KgB7cvFqVP8UCWF6Zq+WtoeLkgx2hopWC/Tc/jmg=";
+          url = "https://pkgs.scale-lang.com/tar/scale-${version}-amd64.tar.xz";
+          hash = "sha256-kExMD6m5li1zpKDjlZrqSHqhS3wuZABhEU4qoqnG/lw=";
         };
         dontConfigure = true;
         dontBuild = true;
-        nativeBuildInputs = [ autoPatchelfHook ];
+        nativeBuildInputs = [ autoPatchelfHook makeWrapper ];
         buildInputs = [
           stdenv.cc.cc.lib
           zlib
@@ -55,28 +59,46 @@
           numactl
           libdrm
           elfutils
-          rocmPackages_6.clr
         ];
 
         installPhase = ''
           mkdir -p $out
           cp -r bin cccl include lib LICENSE.txt llvm NOTICES.txt $out/
 
-          # Only copy the gfxany target. Its the only one we need
-          mkdir -p $out/targets
-          cp -r targets/gfxany $out/targets
+          # We only really need one of these directires since the contents are all basically
+          # the same, and we're gonna rely on a unified way of configuring the compiler later.
+          mkdir $out/targets
+          cp -r targets/gfx1100 $out/targets/gfxany
 
-          # Fix up dead gcc and g++ links
+          # Merge the architecture-specific files. These are the only differences between the
+          # different targets as of writing.
+          for target in $(ls targets); do
+            for f in $(ls targets/$target/lib/*$target*); do
+              cp -P $f $out/targets/gfxany/lib/
+            done
+          done
+
+          # These are not needed, the users should get gcc elsewhere.
           rm $out/targets/gfxany/bin/gcc
-          ln -s ${gcc}/bin/gcc $out/targets/gfxany/bin/gcc
-
           rm $out/targets/gfxany/bin/g++
-          ln -s ${gcc}/bin/g++ $out/targets/gfxany/bin/g++
+
+          # wrapCC detects if a compiler is c++ by whether it has ++ in the name,
+          # so create an extra symlink.
+          ln -s $out/targets/gfxany/bin/nvcc $out/targets/gfxany/bin/nvcc++
+
+          # Actually, scale checks whether its running in nvcc mode by whether
+          # argv[0] is nvcc, so use makeWrapper to write ensure that argv[0]
+          # is correct.
+          rm $out/targets/gfxany/bin/nvcc
+          makeWrapper "$out/llvm/bin/clang++" "$out/targets/gfxany/bin/nvcc" \
+            --argv0 "$out/targets/gfxany/bin/nvcc"
         '';
 
         # Split out the target/ directories into separate packages
         passthru =
         let
+          # Prepare a package that looks like its a normal compiler, so that
+          # wrapCC can process most of the contents automatically.
           gfxany-unwrapped = callPackage ({
             runCommand,
             makeWrapper,
@@ -84,21 +106,13 @@
           }: runCommand "${pname}-${version}-gfxany"
             {
               pname = "${pname}-${version}-gfxany";
-              nativeBuildInputs = [ makeWrapper ];
               inherit version scale;
               passthru = {
                 isClang = true;
               };
             }
             ''
-              targetdir="$scale/targets/gfxany/bin"
-              mkdir -p $out/bin
-              for exe in clang clang++ device-linker-gnu ld.lld nvcc; do
-                # Use makeWrapper as scale uses argv[0] to determine the builtin libs/includes
-                makeWrapper "$targetdir/$exe" "$out/bin/$exe"
-              done
-              # Required because wrapCC treats *++ as c++
-              ln -s $out/bin/nvcc $out/bin/nvcc++
+              ln -s $scale/targets/gfxany $out
             ''
           ) {
             scale = finalAttrs.finalPackage;
@@ -130,10 +144,10 @@
             extraBuildCommands = ''
               wrap nvcc $wrapper $ccPath/nvcc++
 
-              ln -s ${cc}/bin/device-linker-gnu $out/bin/device-linker-gnu
-
-              # Make sure that the wrappers have the highest priority
-              echo "-isystem=${scale}/include/redscale/redscale_impl/wrappers/" >> $out/nix-support/cc-cflags
+              # Make sure that the scale includes have the highest priority. This is
+              # normally the case, but nix reorders them.
+              echo "-isystem ${scale}/include/redscale_impl/wrappers/" >> $out/nix-support/cc-cflags-before
+              echo "-isystem ${gfxany-unwrapped}/include" >> $out/nix-support/cc-cflags-before
             '' + lib.strings.optionalString (ccmap != null) ''
               # Manually set the target to compile for.
               echo "--cuda-ccmap=${ccmap-conf}" >> $out/nix-support/cc-cflags
@@ -160,7 +174,6 @@
         ];
       in pkgs.mkShell {
         packages = [
-          self.packages.${system}.scale
           self.packages.${system}.scale.${arch}
         ];
 
