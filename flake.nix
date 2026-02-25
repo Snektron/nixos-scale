@@ -44,10 +44,10 @@
         makeWrapper,
       }: stdenv.mkDerivation (finalAttrs: rec {
         pname = "scale";
-        version = "1.5.0";
+        version = "1.5.1";
         src = fetchurl {
           url = "https://pkgs.scale-lang.com/tar/scale-${version}-amd64.tar.xz";
-          hash = "sha256-kExMD6m5li1zpKDjlZrqSHqhS3wuZABhEU4qoqnG/lw=";
+          hash = "sha256-dzG6H0VQ+ZZO+lH4vPbB/6nG9bdVyWDyrYpXbQI6/Kg=";
         };
         dontConfigure = true;
         dontBuild = true;
