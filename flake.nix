@@ -174,6 +174,7 @@
         ];
       in pkgs.mkShell {
         packages = [
+          self.packages.${system}.scale
           self.packages.${system}.scale.${arch}
         ];
 
