@@ -109,6 +109,7 @@
               inherit version scale;
               passthru = {
                 isClang = true;
+                hardeningUnsupportedFlags = [ "zerocallusedregs" ];
               };
             }
             ''
@@ -148,6 +149,9 @@
               # normally the case, but nix reorders them.
               echo "-isystem ${scale}/include/redscale_impl/wrappers/" >> $out/nix-support/cc-cflags-before
               echo "-isystem ${gfxany-unwrapped}/include" >> $out/nix-support/cc-cflags-before
+              # Also make sure that scale libraries are marked as more important than everything else
+              # This fixes link issues when NVIDIA CUDA libraries are also available.
+              echo "-L${scale}/targets/gfxany/lib" >> $out/nix-support/cc-cflags-before
             '' + lib.strings.optionalString (ccmap != null) ''
               # Manually set the target to compile for.
               echo "--cuda-ccmap=${ccmap-conf}" >> $out/nix-support/cc-cflags
