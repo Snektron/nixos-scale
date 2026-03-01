@@ -191,9 +191,20 @@
               # normally the case, but nix reorders them.
               echo "-isystem ${scale}/include/redscale_impl/wrappers/" >> $out/nix-support/cc-cflags-before
               echo "-isystem ${gfxany-unwrapped}/include" >> $out/nix-support/cc-cflags-before
+
               # Also make sure that scale libraries are marked as more important than everything else
               # This fixes link issues when NVIDIA CUDA libraries are also available.
-              echo "-L${scale}/targets/gfxany/lib" >> $out/nix-support/cc-cflags-before
+              # Double workaround: Because we need to pass this before any other flags, we cant use
+              # cc-ldflags. Also, we don't really want to add it to cc-clags-before, because putting
+              # -L there emits a warning during normal compilation. -Wl,-L doesn't seem to put the
+              # library in the correct location. The only remaining option is to modify the wrapper vars
+              # via add-local-cc-cflags-before.sh, but this script is also used by clang wrappers.
+              # Fortunately, that script is already in place at this point in the build script, so
+              # we can just append our stuff to it.
+              echo 'if [ "$dontLink" != 1 ]; then' >> $out/nix-support/add-local-cc-cflags-before.sh
+              echo "    extraBefore+=(-L$out/targets/gfxany/lib)" >> $out/nix-support/add-local-cc-cflags-before.sh
+              echo 'fi' >> $out/nix-support/add-local-cc-cflags-before.sh
+
             '' + lib.strings.optionalString (ccmap != null) ''
               # Manually set the target to compile for.
               echo "--cuda-ccmap=${ccmap-conf}" >> $out/nix-support/cc-cflags
