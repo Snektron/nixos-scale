@@ -81,17 +81,6 @@
           # These are not needed, the users should get gcc elsewhere.
           rm $out/targets/gfxany/bin/gcc
           rm $out/targets/gfxany/bin/g++
-
-          # wrapCC detects if a compiler is c++ by whether it has ++ in the name,
-          # so create an extra symlink.
-          ln -s $out/targets/gfxany/bin/nvcc $out/targets/gfxany/bin/nvcc++
-
-          # Actually, scale checks whether its running in nvcc mode by whether
-          # argv[0] is nvcc, so use makeWrapper to write ensure that argv[0]
-          # is correct.
-          rm $out/targets/gfxany/bin/nvcc
-          makeWrapper "$out/llvm/bin/clang++" "$out/targets/gfxany/bin/nvcc" \
-            --argv0 "$out/targets/gfxany/bin/nvcc"
         '';
 
         # Split out the target/ directories into separate packages
@@ -107,6 +96,7 @@
             {
               pname = "${pname}-${version}-gfxany";
               inherit version scale;
+
               passthru = {
                 isClang = true;
                 hardeningUnsupportedFlags = [ "zerocallusedregs" ];
@@ -119,7 +109,7 @@
             scale = finalAttrs.finalPackage;
           };
 
-          gfxany = callPackage ({
+          gfxany = (callPackage ({
             wrapCCWith,
             writeText,
             scale,
@@ -143,7 +133,59 @@
           in wrapCCWith rec {
             cc = gfxany-unwrapped;
             extraBuildCommands = ''
-              wrap nvcc $wrapper $ccPath/nvcc++
+              # There are multiple workarounds going on here:
+              # - Scale checks whether its running in nvcc mode by whether
+              #   argv[0] is nvcc, so use makeWrapper to write ensure that argv[0]
+              #   is correct. Note that makeWrapper has to be passed to here using
+              #   nativeBuildInputs via overrideAttrs because its normally not available,
+              #   and wrapCC does not have an option to add extra native build inputs.
+              # - Scale detects its installation location from the current executable. We
+              #   need this because nvcc -v prints PATH=/nix/store/.../targets/gfxany/bin,
+              #   from which CMake gets the linker path. If this path is the one of the
+              #   scale package, it tries to use the unwrapped clang++ as linker. So, we
+              #   have to create the wrapper here so that scale is launched from the
+              #   path with wrappers, so that it reports the wrapped clang++
+              # - For the previous to work, the remaining directories in targets/gfxany
+              #   need to be wired up, otherwise scale doesn't detect itself as running
+              #   in nvcc mode properly.
+              # - wrapCC detects whether the executable is c++ by whether it has "++" in
+              #   the name, so we have to create a symlink to cheese it into setting the
+              #   correct configuration.
+
+              mkdir -p $out/targets/gfxany/bin/
+
+              # Create an nvcc wrapper, with the correct argv[0]. But put it in a support
+              # directory, since its not actually correct yet (this is an unwrapped compiler).
+              makeWrapper "${scale}/llvm/bin/clang++" "$out/nix-support/nvcc" \
+                --argv0 "$out/targets/gfxany/bin/nvcc"
+
+              # Create an nvcc++ wrapper for wrapCC
+              ln -s $out/nix-support/nvcc $out/nix-support/nvcc++
+
+              # Create the actual wrapped executable. Note: outputs in $out/bin by default.
+              wrap nvcc $wrapper $out/nix-support/nvcc++
+
+              # Wire up the remaining targets/gfxany/ directories
+              for f in include lib lib64 nvvm share; do
+                ln -s ${scale}/targets/gfxany/$f $out/targets/gfxany/$f
+                ln -s ${scale}/targets/gfxany/$f $out/$f
+              done
+
+              # For completeness, rebuild the targets/gfxany/bin directory too.
+              # This is also required for CMake
+              ln -s $out/bin/nvcc $out/targets/gfxany/bin/nvcc
+              for f in amdgpu-arch device-linker-gnu ld.lld lld; do
+                ln -s ${scale}/targets/gfxany/bin/$f $out/targets/gfxany/bin/$f
+              done
+              # Make sure to link these to the wrapped compilers
+              for f in clang clang++; do
+                ln -s $out/bin/$f $out/targets/gfxany/bin/$f
+              done
+
+              # Finally, add in the remaining scale executables in bin/
+              for f in ${scale}/bin/*; do
+                ln -s $f $out/bin/$(basename $f)
+              done
 
               # Make sure that the scale includes have the highest priority. This is
               # normally the case, but nix reorders them.
@@ -159,7 +201,10 @@
           }) {
             scale = finalAttrs.finalPackage;
             inherit gfxany-unwrapped;
-          };
+          }).overrideAttrs (old: {
+            # Need to add makeWrapper via this cheeky way
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+          });
 
           wrapped-compilers = lib.attrsets.genAttrs
             scaleTargets
@@ -174,11 +219,10 @@
       scaleTargets
       (arch: let
          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-          self.packages.${system}.scale
+          self.packages.${system}.scale.${arch}
         ];
       in pkgs.mkShell {
         packages = [
-          self.packages.${system}.scale
           self.packages.${system}.scale.${arch}
         ];
 
