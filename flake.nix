@@ -125,8 +125,8 @@
           }:
           let
             ccmap-lines = (lib.attrsets.mapAttrsToList
-              (cc: arch: if cc == "default" then "${arch}" else "${cc} ${arch}")
-              ccmap);
+              (cc: arch: if cc == "default" then "" else "${cc} ${arch}")
+              ccmap) ++ [ ccmap.default or "" ];
 
             ccmap-conf = writeText "ccmap.conf"
               (lib.strings.concatLines ccmap-lines);
