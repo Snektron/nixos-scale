@@ -226,22 +226,28 @@
       })) {};
     };
 
-    devShells.${system} = pkgs.lib.genAttrs
-      scaleTargets
-      (arch: let
-         LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-          self.packages.${system}.scale.${arch}
-        ];
+    lib = {
+      mkScaleDevShell = pkgs: compiler: let
+         LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ compiler ];
       in pkgs.mkShell {
-        packages = [
-          self.packages.${system}.scale.${arch}
-        ];
+        packages = [ compiler ];
 
         # just using `inherit LD_LIBRARY_PATH` here doesn't seem to compose very
         # well, so just set the library path via an environment variable...
         shellHook = ''
           export "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:$LD_LIBRARY_PATH"
         '';
-      });
+      };
+
+      mkScaleDevShellFromCCMap = pkgs: ccmap: let
+        compiler = self.packages.${pkgs.stdenv.hostPlatform.system}.scale.gfxany.override {
+          inherit ccmap;
+        };
+      in self.lib.mkScaleDevShell pkgs compiler;
+    };
+
+    devShells.${system} = pkgs.lib.genAttrs
+      scaleTargets
+      (arch: self.lib.mkScaleDevShell pkgs self.packages.${pkgs.stdenv.hostPlatform.system}.scale.${arch});
   };
 }
